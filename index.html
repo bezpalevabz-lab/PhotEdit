@@ -117,3 +117,152 @@ void main(){
   c=mix(c,midColor,miM*midAmount);
   gl_FragColor=vec4(clamp(c,0.0,1.0),src.a);
 }`;
+  class Engine{
+  constructor(){
+    this.canvas=document.createElement('canvas');
+    this.gl=this.canvas.getContext('webgl',{preserveDrawingBuffer:true,premultipliedAlpha:false});
+    if(!this.gl)throw new Error('WebGL');
+    const gl=this.gl;
+    const comp=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(sh));return sh;};
+    this.p=gl.createProgram();
+    gl.attachShader(this.p,comp(gl.VERTEX_SHADER,VERT));
+    gl.attachShader(this.p,comp(gl.FRAGMENT_SHADER,FRAG));
+    gl.linkProgram(this.p);
+    if(!gl.getProgramParameter(this.p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(this.p));
+    const buf=gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+    const names=['img','exposure','contrast','highlights','shadows','temperature','saturation','blackPoint','whitePoint','gamma','lutTex','useCurve','shadowColor','shadowAmount','midColor','midAmount','highlightColor','highlightAmount','balance','hslHue','hslSat','hslLum'];
+    this.u={};names.forEach(n=>this.u[n]=gl.getUniformLocation(this.p,n));
+    this.lut=gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D,this.lut);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,4,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(64*4*4));
+    this.imgTex=null;this.size={w:0,h:0};
+  }
+  setImage(img){
+    const gl=this.gl;
+    if(this.imgTex)gl.deleteTexture(this.imgTex);
+    this.imgTex=gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D,this.imgTex);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+    this.size={w:img.width,h:img.height};
+  }
+  setLUT(r,g,b){
+    const gl=this.gl;
+    const data=new Uint8Array(64*4*4);
+    for(let ch=0;ch<3;ch++){
+      const arr=ch===0?r:ch===1?g:b;
+      for(let i=0;i<256;i++){const x=i%64,y=Math.floor(i/64);data[(x+y*64)*4+ch]=arr[i];}
+    }
+    gl.bindTexture(gl.TEXTURE_2D,this.lut);
+    gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,64,4,gl.RGBA,gl.UNSIGNED_BYTE,data);
+  }
+  render(p,tw,th){
+    const gl=this.gl;if(!this.imgTex)return;
+    const w=tw||this.size.w,h=th||this.size.h;
+    if(this.canvas.width!==w)this.canvas.width=w;
+    if(this.canvas.height!==h)this.canvas.height=h;
+    gl.viewport(0,0,w,h);
+    gl.useProgram(this.p);
+    const a=gl.getAttribLocation(this.p,'a');
+    gl.enableVertexAttribArray(a);
+    gl.vertexAttribPointer(a,2,gl.FLOAT,false,0,0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D,this.imgTex);
+    gl.uniform1i(this.u.img,0);
+    gl.uniform1f(this.u.exposure,p.exposure);
+    gl.uniform1f(this.u.contrast,p.contrast);
+    gl.uniform1f(this.u.highlights,p.highlights);
+    gl.uniform1f(this.u.shadows,p.shadows);
+    gl.uniform1f(this.u.temperature,p.temperature);
+    gl.uniform1f(this.u.saturation,p.saturation);
+    gl.uniform1f(this.u.blackPoint,p.blackPoint);
+    gl.uniform1f(this.u.whitePoint,p.whitePoint);
+    gl.uniform1f(this.u.gamma,p.gamma);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D,this.lut);
+    gl.uniform1i(this.u.lutTex,1);
+    gl.uniform1i(this.u.useCurve,p.useCurve?1:0);
+    gl.uniform3fv(this.u.shadowColor,p.shadowColor);
+    gl.uniform1f(this.u.shadowAmount,p.shadowAmount);
+    gl.uniform3fv(this.u.midColor,p.midColor);
+    gl.uniform1f(this.u.midAmount,p.midAmount);
+    gl.uniform3fv(this.u.highlightColor,p.highlightColor);
+    gl.uniform1f(this.u.highlightAmount,p.highlightAmount);
+    gl.uniform1f(this.u.balance,p.balance);
+    gl.uniform1fv(this.u.hslHue,p.hslHue);
+    gl.uniform1fv(this.u.hslSat,p.hslSat);
+    gl.uniform1fv(this.u.hslLum,p.hslLum);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+  }
+}
+
+function buildLUT(pts){
+  const s=[...pts].sort((a,b)=>a.x-b.x);
+  if(s.length<2){const l=new Uint8Array(256);for(let i=0;i<256;i++)l[i]=i;return l;}
+  const xs=s.map(p=>p.x),ys=s.map(p=>p.y),n=xs.length;
+  const lut=new Uint8Array(256);
+  for(let x=0;x<256;x++){
+    const t=x/255;
+    if(t<=xs[0]){lut[x]=Math.max(0,Math.min(255,Math.round(ys[0]*255)));continue;}
+    if(t>=xs[n-1]){lut[x]=Math.max(0,Math.min(255,Math.round(ys[n-1]*255)));continue;}
+    let seg=0;for(let i=0;i<n-1;i++)if(t>=xs[i]&&t<=xs[i+1]){seg=i;break;}
+    const u=(t-xs[seg])/(xs[seg+1]-xs[seg]);
+    const y=ys[seg]+(ys[seg+1]-ys[seg])*u;
+    lut[x]=Math.max(0,Math.min(255,Math.round(y*255)));
+  }
+  return lut;
+}
+
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const loadImg=src=>new Promise((r,j)=>{const i=new Image();i.onload=()=>r(i);i.onerror=j;i.src=src;});
+
+function Slider({label,value,min,max,step=1,onChange,gradient,format,unit=''}){
+  const pct=((value-min)/(max-min))*100;
+  return (
+    <div className="mb-3">
+      <div className="flex justify-between text-[10px] mb-1">
+        <span className="text-[#888]">{label}</span>
+        <span className="font-mono tabular-nums text-[#E5E5E5]">{format?format(value):Math.round(value)}{unit}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e=>onChange(Number(e.target.value))}
+        className="w-full slider-input"
+        style={{background:gradient||`linear-gradient(to right,#3B82F6 ${pct}%,#2E2E2E ${pct}%)`}}/>
+    </div>
+  );
+}
+
+function Levels({hist,levels,setLevels}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    const c=ref.current;if(!c||!hist)return;
+    const ctx=c.getContext('2d'),w=c.width,h=c.height;
+    ctx.clearRect(0,0,w,h);
+    let mx=0;for(const ch of ['r','g','b'])for(let i=0;i<256;i++)if(hist[ch][i]>mx)mx=hist[ch][i];
+    if(!mx)return;
+    const cols={r:'rgba(239,68,68,0.6)',g:'rgba(34,197,94,0.6)',b:'rgba(59,130,246,0.6)'};
+    ctx.globalCompositeOperation='lighter';
+    for(const ch of ['r','g','b']){
+      ctx.beginPath();ctx.moveTo(0,h);
+      for(let i=0;i<256;i++)ctx.lineTo((i/255)*w,h-(hist[ch][i]/mx)*h*0.92);
+      ctx.lineTo(w,h);ctx.closePath();ctx.fillStyle=cols[ch];ctx.fill();
+    }
+    ctx.globalCompositeOperation='source-over';
+  },[hist]);
+  return (<div className="mb-4">
+    <div className="text-xs font-semibold mb-2">Уровни</div>
+    <canvas ref={ref} width={280} height={80} className="w-full h-20 bg-[#0a0a0a] border border-[#2E2E2E] rounded mb-2"/>
+    <Slider label="Черная" value={levels.black} min={0} max={255} onChange={v=>setLevels({...levels,black:Math.min(v,levels.white-1)})}/>
+    <Slider label="Гамма" value={levels.gamma} min={0.1} max={3} step={0.01} onChange={v=>setLevels({...levels,gamma:v})} format={v=>v.toFixed(2)}/>
+    <Slider label="Белая" value={levels.white} min={0} max={255} onChange={v=>setLevels({...levels,white:Math.max(v,levels.black+1)})}/>
+  </div>);
+    }
